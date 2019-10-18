@@ -2,6 +2,7 @@ package org.newrelic.nrjmx;
 
 import org.apache.commons.cli.*;
 
+// todo use http://github.com/mariomac/kaconf, because it kicks the asses
 class Arguments {
     private String hostname;
     private int port;

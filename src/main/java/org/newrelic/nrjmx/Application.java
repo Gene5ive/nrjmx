@@ -1,7 +1,19 @@
 package org.newrelic.nrjmx;
 
 import org.apache.commons.cli.HelpFormatter;
+import org.newrelic.nrjmx.conn.JMXConnectorFactory;
+import org.newrelic.nrjmx.conn.LegacyJMXConnectorBuilder;
+import org.newrelic.nrjmx.fetcher.Fetcher;
+import org.newrelic.nrjmx.fetcher.LegacyFetcher;
+import org.newrelic.nrjmx.fwd.Forwarder;
+import org.newrelic.nrjmx.fwd.StreamForwarder;
 
+import javax.management.remote.JMXConnector;
+import java.util.Scanner;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -27,34 +39,27 @@ public class Application {
 
         Logger logger = Logger.getLogger("nrjmx");
         Logging.setup(logger, cliArgs.isVerbose());
+        Executor exec = Executors.newCachedThreadPool();
 
-        // Instantiate a JMXFetcher from the configuration arguments
-        JMXFetcher fetcher = new JMXFetcher(
-            cliArgs.getHostname(), cliArgs.getPort(), cliArgs.getUriPath(),
-            cliArgs.getUsername(), cliArgs.getPassword(),
-            cliArgs.getKeyStore(), cliArgs.getKeyStorePassword(),
-            cliArgs.getTrustStore(), cliArgs.getTrustStorePassword(),
-            cliArgs.getIsRemoteJMX(), cliArgs.getIsRemoteJBossStandalone()
-        );
+        JMXConnectorFactory cf = new LegacyJMXConnectorBuilder(cliArgs.getHostname(), cliArgs.getPort())
+                .uriPath(cliArgs.getUriPath())
+                .userPassword(cliArgs.getUsername(), cliArgs.getPassword())
+                .keyStore(cliArgs.getKeyStore(), cliArgs.getKeyStorePassword())
+                .trustStore(cliArgs.getTrustStore(), cliArgs.getTrustStorePassword())
+                .remote(cliArgs.getIsRemoteJMX())
+                .jbossStandalone(cliArgs.getIsRemoteJBossStandalone());
+        Forwarder output = new StreamForwarder();
 
-        try {
-
-            fetcher.run(System.in, System.out);
-        } catch (JMXFetcher.ConnectionError e) {
+        try (JMXConnector conn = cf.get()) {
+            Fetcher fetcher = new LegacyFetcher(conn.getMBeanServerConnection(), exec);
+            new StdinAcceptor(fetcher, System.in, output).run().get(); // wait for all the tasks to complete
+        } catch (Exception e) {
             logger.severe(e.getMessage());
             logger.log(Level.FINE, e.getMessage(), e);
             System.exit(1);
-        } catch (Exception e) {
-            if (cliArgs.isDebugMode()) {
-                e.printStackTrace();
-            } else {
-                System.out.println(e.getClass().getCanonicalName());
-                logger.severe(e.getClass().getCanonicalName() + ": " + e.getMessage());
-                logger.log(Level.FINE, e.getMessage(), e);
-            }
-            System.exit(1);
         }
 
-
+        logger.fine("wait for all the missing tasks to complete");
+        logger.fine("tasks complete");
     }
 }
